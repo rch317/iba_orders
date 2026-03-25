@@ -5,7 +5,7 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any
 
 import gspread
@@ -24,6 +24,7 @@ OPTIONAL_ADDRESS2_VALUES = {
     "apt/suite optional",
     "optional",
 }
+MEMBERSHIP_PRICE_PER_YEAR = Decimal("35.00")
 USPS_STATE_FALLBACKS = {
     "armed forces americas": "AA",
     "armed forces europe": "AE",
@@ -102,6 +103,14 @@ def parse_timestamp(value: str | None) -> datetime | None:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def add_years(dt: datetime, years: int) -> datetime:
+    try:
+        return dt.replace(year=dt.year + years)
+    except ValueError:
+        # Handle leap-day purchases by using the last valid day in February.
+        return dt.replace(month=2, day=28, year=dt.year + years)
 
 
 def safe_decimal(value: Any) -> str:
@@ -466,6 +475,30 @@ def normalize_members_row_case(row: list[str]) -> list[str]:
     return normalized
 
 
+def parse_positive_int(value: Any, default: int = 1) -> int:
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def membership_years_for_line_item(line_item: dict[str, Any]) -> int:
+    quantity = parse_positive_int(line_item.get("quantity", 1), default=1)
+    unit_price = safe_decimal((line_item.get("unitPricePaid") or {}).get("value", ""))
+
+    if unit_price:
+        try:
+            total_paid = Decimal(unit_price) * Decimal(quantity)
+            computed_years = int((total_paid / MEMBERSHIP_PRICE_PER_YEAR).to_integral_value(rounding=ROUND_HALF_UP))
+            if computed_years > 0:
+                return computed_years
+        except (InvalidOperation, ValueError):
+            pass
+
+    return quantity
+
+
 MANAGED_MEMBER_COLUMN_INDEXES = (0, 1, 2, 3, 5, 6, 9, 12, 13, 14, 15, 16, 17, 21, 23, 24, 26, 27)
 
 
@@ -512,7 +545,13 @@ def members_row_from_order(order: dict[str, Any]) -> list[str]:
 
     row[0] = ""
     row[1] = new_or_renewing
-    row[2] = ((created_on + timedelta(days=365)).date().isoformat() if created_on else "")
+    membership_years = membership_years_for_line_item(line_item)
+
+    row[2] = (
+        add_years(created_on, membership_years).date().isoformat()
+        if created_on
+        else ""
+    )
     row[3] = bool_to_yn("not" not in public_list_pref.lower())
     row[4] = ""
     row[5] = bool_to_yn(bool(newsletter_pref))
@@ -544,13 +583,16 @@ def sync_members_from_orders_sheet(config: Config) -> int:
     members_ws = spreadsheet.worksheet(config.google_members_worksheet)
 
     order_rows = orders_ws.get_all_values()
-    if len(order_rows) <= 1:
+    if not order_rows:
         logger.info("Orders sheet has no data rows. Skipping members sync.")
         return 0
 
     orders_by_id: dict[str, dict[str, Any]] = {}
-    for source_row in order_rows[1:]:
+    for source_row in order_rows:
         if len(source_row) < 15:
+            continue
+        order_id_cell = source_row[1].strip().lower() if len(source_row) > 1 else ""
+        if order_id_cell == "order_id":
             continue
         raw_json = source_row[14].strip()
         if not raw_json:
@@ -567,7 +609,7 @@ def sync_members_from_orders_sheet(config: Config) -> int:
 
     # Repair rows that were previously shifted right by 26 columns.
     repairs: list[tuple[int, list[str]]] = []
-    for row_index, row in enumerate(members_values[1:], start=2):
+    for row_index, row in enumerate(members_values, start=1):
         padded = row + [""] * max(0, 54 - len(row))
         left_id = padded[0].strip() if len(padded) > 0 else ""
         shifted_id = padded[26].strip() if len(padded) > 26 else ""
@@ -580,7 +622,7 @@ def sync_members_from_orders_sheet(config: Config) -> int:
 
     # Normalize existing rows to avoid writing order IDs into auto-generated column A
     # and reconcile managed fields from the latest order data.
-    for row_index, row in enumerate(members_values[1:], start=2):
+    for row_index, row in enumerate(members_values, start=1):
         padded = row + [""] * max(0, 54 - len(row))
         left_id = padded[0].strip() if len(padded) > 0 else ""
         shifted_id = padded[26].strip() if len(padded) > 26 else ""
@@ -608,7 +650,7 @@ def sync_members_from_orders_sheet(config: Config) -> int:
         repairs.append((row_index, repaired))
 
     # Normalize case for all existing Squarespace-origin rows.
-    for row_index, row in enumerate(members_values[1:], start=2):
+    for row_index, row in enumerate(members_values, start=1):
         padded = row + [""] * max(0, 54 - len(row))
         current = padded[:29]
         database_value = current[27].strip() if len(current) > 27 else ""
@@ -633,7 +675,7 @@ def sync_members_from_orders_sheet(config: Config) -> int:
         members_values = members_ws.get_all_values()
 
     existing_member_ids: set[str] = set()
-    for row in members_values[1:]:
+    for row in members_values:
         padded = row + [""] * max(0, 54 - len(row))
         database_value = padded[27].strip() if len(padded) > 27 else ""
         if database_value.lower().startswith("squarespace:"):

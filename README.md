@@ -54,6 +54,7 @@ If Google Sheets values are not configured, the script still writes CSV output.
 - Members de-duplication: existing `DATABASE` values starting with `squarespace:` are not appended again.
 - Members column policy: column `A` remains blank for auto-generated sheet IDs.
 - Mapping source: first line item customizations are used, with custom `Name`/`Address` preferred over billing details.
+- `EXPIRES` calculation: purchase date plus computed membership years, where years are derived from the first line item using `$35.00/year` (with quantity fallback).
 - Normalization:
   - Name/address/city/satellite group title-cased with acronym preservation (`TBD`, `US`, `USA`).
   - Emails lowercased.
