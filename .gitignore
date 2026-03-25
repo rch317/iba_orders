@@ -1,0 +1,5 @@
+.env
+*.swp
+.secrets/
+ai-instructions.md
+orders_sample.json
