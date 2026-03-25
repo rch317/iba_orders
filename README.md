@@ -1,28 +1,67 @@
-# Squarespace Pending Orders Sync
+# Squarespace Orders Sync
 
-This project fetches Squarespace orders from the last year and appends them to a Google Sheet.
+Containerized Python job that:
+
+1. Fetches pending Squarespace Commerce orders in a configurable date window (default: last 30 days).
+1. Writes new order rows to a local CSV export.
+1. Appends only new orders to the `orders_v2` worksheet (de-duplicated by `order_id`).
+1. Maps/reconciles Squarespace orders into the `members` worksheet using `squarespace:<order_id>` as the external key.
 
 Environment variables are loaded from `.env`.
 
-Run in Docker
+## Run In Docker
 
-1. Build the image:
+Build:
 
+```bash
 docker build -t iba-orders-sync .
+```
 
-1. Run the container (mount Google service account credentials):
+Run:
 
+```bash
 docker run --rm \
   --env-file .env \
   -v "$(pwd)/.secrets:/app/.secrets:ro" \
   -v "$(pwd):/app/output" \
   -e OUTPUT_FILE=/app/output/iba_squarespace_orders.csv \
   iba-orders-sync
+```
 
-Notes
+## Environment Variables
 
-- Required env vars: API_KEY
-- Optional env vars: STORE_ID, DAYS_BACK, OUTPUT_FILE, GOOGLE_SHEET_ID, GOOGLE_WORKSHEET, GOOGLE_MEMBERS_WORKSHEET, GOOGLE_CREDENTIALS_FILE
-- If Google Sheets env vars are not set, the script still writes CSV output.
-- Duplicate prevention: if Google Sheets is configured, rows for existing order_id values are skipped.
-- Members mapping: rows in orders worksheet are mapped into members worksheet (deduped by ID).
+Required:
+
+- `API_KEY`: Squarespace API key.
+
+Optional:
+
+- `STORE_ID`: Limits fetches to one Squarespace store.
+- `DAYS_BACK`: Number of days to fetch (default `30`).
+- `HTTP_TIMEOUT_SECONDS`: HTTP request timeout in seconds (default `30`).
+- `OUTPUT_FILE`: CSV output path (default `iba_squarespace_orders.csv`).
+- `GOOGLE_SHEET_ID`: Target spreadsheet ID.
+- `GOOGLE_WORKSHEET`: Orders worksheet name (default `orders`; current setup uses `orders_v2`).
+- `GOOGLE_MEMBERS_WORKSHEET`: Members worksheet name (default `members`).
+- `GOOGLE_CREDENTIALS_FILE`: Service account JSON path.
+
+If Google Sheets values are not configured, the script still writes CSV output.
+
+## Current Data Behavior
+
+- Fetch scope: pending orders created between `now - DAYS_BACK` and `now`.
+- Orders de-duplication: existing `order_id` values in the orders sheet are skipped.
+- Members de-duplication: existing `DATABASE` values starting with `squarespace:` are not appended again.
+- Members column policy: column `A` remains blank for auto-generated sheet IDs.
+- Mapping source: first line item customizations are used, with custom `Name`/`Address` preferred over billing details.
+- Normalization:
+  - Name/address/city/satellite group title-cased with acronym preservation (`TBD`, `US`, `USA`).
+  - Emails lowercased.
+  - State normalized to USPS-style abbreviations (including military/fallback aliases).
+  - Phone normalized to US display format when possible: `(###) ###-####`.
+  - Placeholder address2 values like `Apt/Suite (Optional)` are removed.
+
+## Notes
+
+- Orders are written with a raw JSON column, which is used to derive/reconcile `members` rows.
+- Existing members rows are repaired/normalized in place when they are recognized as Squarespace-origin rows.

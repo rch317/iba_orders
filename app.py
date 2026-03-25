@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 
 
 API_BASE_URL = "https://api.squarespace.com/1.0/commerce/orders"
-DEFAULT_DAYS_BACK = 365
+DEFAULT_DAYS_BACK = 30
 DEFAULT_PAGE_SIZE = 50
 DEFAULT_TIMEOUT_SECONDS = 30
 ORDER_ID_PATTERN = re.compile(r"^[a-f0-9]{24}$", re.IGNORECASE)
@@ -136,6 +136,7 @@ def fetch_recent_orders(config: Config) -> list[dict[str, Any]]:
         "createdAfter": iso_utc(cutoff),
         "createdBefore": iso_utc(datetime.now(timezone.utc)),
         "limit": DEFAULT_PAGE_SIZE,
+        "fulfillmentStatus": "PENDING",
     }
     if config.store_id:
         params["storeId"] = config.store_id
@@ -165,9 +166,13 @@ def fetch_recent_orders(config: Config) -> list[dict[str, Any]]:
             break
         cursor = str(next_cursor)
 
-    # Keep local filtering as a safety net in case API filters are changed.
+    # Keep local filtering as a safety net in case API-side filters are changed.
     filtered: list[dict[str, Any]] = []
     for order in orders:
+        status = str(order.get("fulfillmentStatus", "")).strip().upper()
+        if status != "PENDING":
+            continue
+
         created_on = parse_timestamp(order.get("createdOn"))
         modified_on = parse_timestamp(order.get("modifiedOn"))
 
