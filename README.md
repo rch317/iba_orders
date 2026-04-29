@@ -6,6 +6,7 @@ Containerized Python job that:
 1. Writes new order rows to a local CSV export.
 1. Appends only new orders to the `orders_v2` worksheet (de-duplicated by `order_id`).
 1. Maps/reconciles Squarespace orders into the `members` worksheet using `squarespace:<order_id>` as the external key.
+1. Verifies processed orders exist in the spreadsheet, then marks them as fulfilled in Squarespace.
 
 Environment variables are loaded from `.env`.
 
@@ -61,6 +62,7 @@ If Google Sheets values are not configured, the script still writes CSV output.
   - State normalized to USPS-style abbreviations (including military/fallback aliases).
   - Phone normalized to US display format when possible: `(###) ###-####`.
   - Placeholder address2 values like `Apt/Suite (Optional)` are removed.
+- Fulfillment: Orders are marked as fulfilled in Squarespace only after they have been successfully verified to exist in the orders worksheet. If an order cannot be found in the spreadsheet, fulfillment is skipped with a warning log.
 
 ## Notes
 

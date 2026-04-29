@@ -288,6 +288,72 @@ def existing_order_ids_in_sheet(config: Config) -> set[str]:
     }
 
 
+def order_exists_in_sheet(config: Config, order_id: str) -> bool:
+    """Check if an order exists in the orders worksheet."""
+    if not config.google_sheet_id or not config.google_credentials_file:
+        logger.debug("Google Sheets not configured; cannot verify order existence.")
+        return False
+
+    try:
+        existing_ids = existing_order_ids_in_sheet(config)
+        return order_id in existing_ids
+    except Exception as e:
+        logger.error("Error checking order existence in sheet: %s", e)
+        return False
+
+
+def mark_order_as_fulfilled(config: Config, order_id: str) -> bool:
+    """Mark an order as fulfilled in Squarespace API.
+    
+    Returns True if successfully marked, False otherwise.
+    """
+    try:
+        session = requests.Session()
+        session.headers.update(
+            {
+                "Authorization": f"Bearer {config.api_key}",
+                "Accept": "application/json",
+                "User-Agent": "iba-orders-sync/1.0",
+            }
+        )
+
+        url = f"{API_BASE_URL}/{order_id}/fulfillments"
+        payload = {"shouldSendNotification": False}
+
+        response = session.post(url, json=payload, timeout=config.timeout_seconds)
+        response.raise_for_status()
+
+        logger.info("Marked order %s as FULFILLED in Squarespace.", order_id)
+        return True
+    except requests.exceptions.RequestException as e:
+        logger.error("Failed to mark order %s as fulfilled: %s", order_id, e)
+        return False
+
+
+def fulfill_processed_orders(config: Config, orders: list[dict[str, Any]]) -> int:
+    """Verify orders exist in the spreadsheet, then mark them as fulfilled in Squarespace.
+    
+    Returns the count of orders successfully marked as fulfilled.
+    """
+    fulfilled_count = 0
+
+    for order in orders:
+        order_id = str(order.get("id", "")).strip()
+        if not order_id:
+            continue
+
+        # Verify order exists in the sheet before marking as fulfilled
+        if not order_exists_in_sheet(config, order_id):
+            logger.warning("Order %s not found in spreadsheet; skipping fulfillment.", order_id)
+            continue
+
+        # Mark as fulfilled in Squarespace
+        if mark_order_as_fulfilled(config, order_id):
+            fulfilled_count += 1
+
+    return fulfilled_count
+
+
 def filter_new_rows(config: Config, rows: list[list[str]]) -> list[list[str]]:
     existing_order_ids = existing_order_ids_in_sheet(config)
     if not existing_order_ids:
@@ -736,6 +802,12 @@ def main() -> None:
             members_added,
             config.google_members_worksheet,
         )
+
+    # Mark orders as fulfilled in Squarespace after successfully processing them
+    fulfilled_count = fulfill_processed_orders(config, orders)
+    if fulfilled_count > 0:
+        logger.info("Marked %s orders as fulfilled in Squarespace.", fulfilled_count)
+
 
 
 if __name__ == "__main__":
