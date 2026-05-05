@@ -2,7 +2,7 @@
 
 Containerized Python job that:
 
-1. Fetches pending Squarespace Commerce orders in a configurable date window (default: last 30 days).
+1. Fetches pending Squarespace Commerce orders in a configurable date window (default: last 30 days), limited to SKUs `SQ8322206` and `SQ7179436`.
 1. Writes new order rows to a local CSV export.
 1. Appends only new orders to the `orders_v2` worksheet (de-duplicated by `order_id`).
 1. Maps/reconciles Squarespace orders into the `members` worksheet using `squarespace:<order_id>` as the external key.
@@ -50,7 +50,7 @@ If Google Sheets values are not configured, the script still writes CSV output.
 
 ## Current Data Behavior
 
-- Fetch scope: pending orders created between `now - DAYS_BACK` and `now`.
+- Fetch scope: pending orders created between `now - DAYS_BACK` and `now`, then filtered to line items with SKUs `SQ8322206` or `SQ7179436`.
 - Orders de-duplication: existing `order_id` values in the orders sheet are skipped.
 - Members de-duplication: existing `DATABASE` values starting with `squarespace:` are not appended again.
 - Members column policy: column `A` remains blank for auto-generated sheet IDs.

@@ -19,6 +19,7 @@ DEFAULT_DAYS_BACK = 30
 DEFAULT_PAGE_SIZE = 50
 DEFAULT_TIMEOUT_SECONDS = 30
 ORDER_ID_PATTERN = re.compile(r"^[a-f0-9]{24}$", re.IGNORECASE)
+TARGET_SKUS = frozenset({"SQ8322206", "SQ7179436"})
 OPTIONAL_ADDRESS2_VALUES = {
     "apt/suite (optional)",
     "apt/suite optional",
@@ -130,6 +131,24 @@ def format_customizations(customizations: list[dict[str, Any]]) -> str:
     return " | ".join(pairs)
 
 
+def filter_order_line_items(order: dict[str, Any]) -> dict[str, Any] | None:
+    line_items = order.get("lineItems") or []
+    if not isinstance(line_items, list):
+        return None
+
+    matching_line_items = [
+        line_item
+        for line_item in line_items
+        if str(line_item.get("sku", "")).strip().upper() in TARGET_SKUS
+    ]
+    if not matching_line_items:
+        return None
+
+    filtered_order = dict(order)
+    filtered_order["lineItems"] = matching_line_items
+    return filtered_order
+
+
 def fetch_recent_orders(config: Config) -> list[dict[str, Any]]:
     session = requests.Session()
     session.headers.update(
@@ -186,10 +205,14 @@ def fetch_recent_orders(config: Config) -> list[dict[str, Any]]:
         modified_on = parse_timestamp(order.get("modifiedOn"))
 
         if created_on and created_on >= cutoff:
-            filtered.append(order)
+            filtered_order = filter_order_line_items(order)
+            if filtered_order:
+                filtered.append(filtered_order)
             continue
         if modified_on and modified_on >= cutoff:
-            filtered.append(order)
+            filtered_order = filter_order_line_items(order)
+            if filtered_order:
+                filtered.append(filtered_order)
 
     return filtered
 
@@ -789,7 +812,12 @@ def main() -> None:
     write_csv(new_rows, config.output_file)
     append_to_google_sheet(config, new_rows)
 
-    logger.info("Fetched %s orders from the last %s days.", len(orders), config.days_back)
+    logger.info(
+        "Fetched %s matching pending orders from the last %s days for SKUs %s.",
+        len(orders),
+        config.days_back,
+        ", ".join(sorted(TARGET_SKUS)),
+    )
     logger.info("Filtered to %s new rows after de-duplication.", len(new_rows))
     logger.info("Wrote %s rows to %s.", len(new_rows), config.output_file)
     if config.google_sheet_id and config.google_credentials_file:
